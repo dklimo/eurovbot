@@ -1,4 +1,5 @@
 import asyncio
+import os
 import logging
 import aiosqlite
 from collections import defaultdict
@@ -13,10 +14,9 @@ from aiogram.types import (
     CallbackQuery,
 )
 
-BOT_TOKEN = "8673858919:AAFNcetIVdQ03kPPw0_0hw8-GBeCcRdf7_I"  
-ADMIN_PASSWORD = "вашQ323ВыРезистор"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
 
-# --- Флаги стран (эмодзи) ---
 FLAGS = {
     "Moldova": "🇲🇩",
     "Serbia": "🇷🇸",
@@ -55,7 +55,6 @@ def get_flag(country_full_name):
     country_name = country_full_name.split(" - ")[0].strip()
     return FLAGS.get(country_name, "🏳️")
 
-# --- Состояния для голосования ---
 class Voting(StatesGroup):
     choosing_list = State()
     choosing_country = State()
@@ -64,7 +63,6 @@ class Voting(StatesGroup):
     entering_singing = State()
     entering_overall = State()
 
-# --- Инициализация БД ---
 async def init_db():
     async with aiosqlite.connect("scoreboard.db") as db:
         await db.execute('''CREATE TABLE IF NOT EXISTS lists (
@@ -90,14 +88,11 @@ async def init_db():
         cursor = await db.execute("SELECT COUNT(*) FROM lists")
         count = (await cursor.fetchone())[0]
         if count == 0:
-            # Создаём списки
+            
             await db.execute("INSERT INTO lists (id, name, locked) VALUES ('semi1','First Semi-Final',0)")
             await db.execute("INSERT INTO lists (id, name, locked) VALUES ('semi2','Second Semi-Final',0)")
             await db.execute("INSERT INTO lists (id, name, locked) VALUES ('final','Final',1)")
 
-            # =====================================================
-            # ПЕРВЫЙ ПОЛУФИНАЛ (строго по вашему списку)
-            # =====================================================
             semi1 = [
                 "Moldova - Viva, Moldova!",
                 "Serbia - My System",
@@ -118,9 +113,6 @@ async def init_db():
             for c in semi1:
                 await db.execute("INSERT INTO countries (list_id, full_name) VALUES ('semi1',?)", (c,))
 
-            # =====================================================
-            # ВТОРОЙ ПОЛУФИНАЛ (строго по вашему списку)
-            # =====================================================
             semi2 = [
                 "Bulgaria - DARA - BANGARANGA",
                 "Azerbaijan - JIVA - JUST GO",
@@ -165,16 +157,12 @@ def split_text(text, max_len=4000):
     parts.append(text)
     return parts
 
-# ============================================================
-#   ОСНОВНОЙ КОД БОТА
-# ============================================================
 async def main():
     await init_db()
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
     admin_sessions = set()
 
-    # --- /start ---
     @dp.message(Command("start"))
     async def cmd_start(message: Message):
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -190,7 +178,7 @@ async def main():
                              "Выберите действие:",
                              parse_mode="Markdown", reply_markup=kb)
 
-    # --- /cancel ---
+
     @dp.message(Command("cancel"))
     @dp.message(F.text.lower() == "отмена")
     async def cmd_cancel(message: Message, state: FSMContext):
@@ -199,7 +187,6 @@ async def main():
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu_start")]
         ]))
 
-    # --- ГОЛОСОВАНИЕ (с флагами) ---
     @dp.callback_query(F.data == "menu_vote")
     async def start_vote(call: CallbackQuery, state: FSMContext):
         unlocked = await get_unlocked_lists()
@@ -221,7 +208,6 @@ async def main():
         buttons = []
         for cid, name in countries:
             flag = get_flag(name)
-            # Более компактный формат для кнопок
             if " - " in name:
                 parts = name.split(" - ", 1)
                 display = f"{flag} {parts[0]} — {parts[1]}"
@@ -244,7 +230,6 @@ async def main():
             country_name = row[0] if row else "?"
             flag = get_flag(country_name)
         await state.update_data(country_display=f"{flag} {country_name}")
-        # Показываем, какую страну оцениваем
         if " - " in country_name:
             parts = country_name.split(" - ", 1)
             display = f"{flag} *{parts[0]}* — {parts[1]}"
@@ -320,9 +305,7 @@ async def main():
         except:
             await message.answer("⚠️ Введите целое число от 1 до 12:")
 
-    # ================================================================
-    #  📊 ВСЕ ОЦЕНКИ (сортировка по убыванию среднего, с флагами)
-    # ================================================================
+
     @dp.callback_query(F.data == "menu_scores")
     async def show_scores(call: CallbackQuery):
         await call.message.edit_text("⏳ Загружаю оценки...")
@@ -341,22 +324,20 @@ async def main():
                                          ]))
             return
 
-        # Группируем: { (list_name, country): { username: (perf,sing,overall) } }
+
         grouped = defaultdict(dict)
         for list_name, country, username, p, s, o in rows:
             grouped[(list_name, country)][username] = (p, s, o)
 
-        # Строим список стран со средним общим баллом
         country_stats = []
         for (list_name, country), users in grouped.items():
             avg_overall = sum(v[2] for v in users.values()) / len(users)
             flag = get_flag(country)
             country_stats.append((list_name, flag, country, users, avg_overall))
 
-        # Сортируем по убыванию среднего общего балла
+
         country_stats.sort(key=lambda x: x[4], reverse=True)
 
-        # Формируем текст
         lines = ["📊 **ВСЕ ОЦЕНКИ** (сортировка по среднему баллу)\n"]
         current_list = None
         for list_name, flag, country, users, avg in country_stats:
@@ -372,7 +353,6 @@ async def main():
 
         full_text = "\n".join(lines)
 
-        # Разбиваем на части и отправляем несколько сообщений
         parts = split_text(full_text, 4000)
         for i, part in enumerate(parts):
             if i == 0:
@@ -385,9 +365,7 @@ async def main():
         ]))
         await call.answer()
 
-    # ============================================================
-    #  🏆 ТОП-10 (с флагами)
-    # ============================================================
+
     @dp.callback_query(F.data == "menu_top10")
     async def show_top10(call: CallbackQuery):
         async with aiosqlite.connect("scoreboard.db") as db:
@@ -426,7 +404,7 @@ async def main():
                                      ]))
         await call.answer()
 
-    # --- АДМИН-ЛОГИН ---
+  
     @dp.callback_query(F.data == "menu_admin")
     async def admin_prompt(call: CallbackQuery):
         await call.message.edit_text("🔐 Введите пароль администратора:")
@@ -434,10 +412,19 @@ async def main():
     @dp.message(F.text == ADMIN_PASSWORD)
     async def admin_login(message: Message):
         admin_sessions.add(message.from_user.id)
-        await message.answer("✅ Вы вошли как администратор.\n\nКоманды:\n"
-                             "🔒 /lock semi1 | semi2 | final\n"
-                             "🔓 /unlock semi1 | semi2 | final\n"
-                             "🚪 /admin_logout — выйти")
+        await message.answer(
+            "✅ Вы вошли как администратор.\n\n"
+            "📋 *Команды управления списками:*\n"
+            "🔒 /lock semi1 | semi2 | final — заблокировать\n"
+            "🔓 /unlock semi1 | semi2 | final — разблокировать\n\n"
+            "🗑️ *Команды удаления оценок:*\n"
+            "/del_user <имя> — удалить все оценки пользователя\n"
+            "/del_country <страна> — удалить все оценки для страны\n"
+            "/del_all — удалить ВСЕ оценки (осторожно!)\n"
+            "/reset_db — полностью сбросить базу\n\n"
+            "🚪 /admin_logout — выйти",
+            parse_mode="Markdown"
+        )
 
     @dp.message(Command("admin_logout"))
     async def admin_logout(message: Message):
@@ -447,6 +434,7 @@ async def main():
     def is_admin(message: Message):
         return message.from_user.id in admin_sessions
 
+   
     @dp.message(Command("lock"))
     async def lock_list(message: Message):
         if not is_admin(message):
@@ -481,13 +469,108 @@ async def main():
         except:
             await message.answer("⚠️ Используйте: /unlock semi1 | /unlock semi2 | /unlock final")
 
-    # Кнопка "Главное меню"
+   
+    @dp.message(Command("del_user"))
+    async def delete_user_scores(message: Message):
+        if not is_admin(message):
+            await message.answer("⛔ Сначала войдите как администратор.")
+            return
+        try:
+            username = message.text.split(" ", 1)[1].strip()
+            if not username:
+                raise ValueError
+            async with aiosqlite.connect("scoreboard.db") as db:
+                cursor = await db.execute("DELETE FROM scores WHERE username=?", (username,))
+                deleted = cursor.rowcount
+                await db.commit()
+            if deleted > 0:
+                await message.answer(f"🗑️ Удалено {deleted} оценок пользователя **{username}**", parse_mode="Markdown")
+            else:
+                await message.answer(f"❌ Пользователь **{username}** не найден.", parse_mode="Markdown")
+        except:
+            await message.answer("⚠️ Используйте: /del_user Имя Пользователя\nПример: /del_user Alex")
+
+    @dp.message(Command("del_country"))
+    async def delete_country_scores(message: Message):
+        if not is_admin(message):
+            await message.answer("⛔ Сначала войдите как администратор.")
+            return
+        try:
+            
+            country_name = message.text.split(" ", 1)[1].strip()
+            if not country_name:
+                raise ValueError
+            async with aiosqlite.connect("scoreboard.db") as db:
+                cursor = await db.execute(
+                    "SELECT id, full_name FROM countries WHERE full_name LIKE ?",
+                    (f"%{country_name}%",)
+                )
+                countries = await cursor.fetchall()
+                
+                if not countries:
+                    await message.answer(f"❌ Страна **{country_name}** не найдена.", parse_mode="Markdown")
+                    return
+                
+                total_deleted = 0
+                for country_id, full_name in countries:
+                    cursor = await db.execute("DELETE FROM scores WHERE country_id=?", (country_id,))
+                    total_deleted += cursor.rowcount
+                
+                await db.commit()
+            
+            await message.answer(
+                f"🗑️ Удалено {total_deleted} оценок для стран, содержащих **{country_name}**",
+                parse_mode="Markdown"
+            )
+        except:
+            await message.answer("⚠️ Используйте: /del_country Название Страны\nПример: /del_country Moldova")
+
+    @dp.message(Command("del_all"))
+    async def delete_all_scores(message: Message):
+        if not is_admin(message):
+            await message.answer("⛔ Сначала войдите как администратор.")
+            return
+        try:
+            async with aiosqlite.connect("scoreboard.db") as db:
+                cursor = await db.execute("SELECT COUNT(*) FROM scores")
+                count = (await cursor.fetchone())[0]
+                await db.execute("DELETE FROM scores")
+                await db.commit()
+            await message.answer(f"🗑️ Удалены ВСЕ оценки ({count} шт.). База очищена.")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+
+    @dp.message(Command("reset_db"))
+    async def reset_database(message: Message):
+        if not is_admin(message):
+            await message.answer("⛔ Сначала войдите как администратор.")
+            return
+        try:
+            if "confirm" not in message.text:
+                await message.answer(
+                    "⚠️ **ВНИМАНИЕ!** Это удалит ВСЕ оценки и списки стран.\n"
+                    "Для подтверждения напишите: `/reset_db confirm`",
+                    parse_mode="Markdown"
+                )
+                return
+            
+            async with aiosqlite.connect("scoreboard.db") as db:
+                await db.execute("DROP TABLE IF EXISTS scores")
+                await db.execute("DROP TABLE IF EXISTS countries")
+                await db.execute("DROP TABLE IF EXISTS lists")
+                await db.commit()
+            
+            await init_db()
+            await message.answer("🔄 База данных полностью сброшена и пересоздана. Все списки восстановлены.")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+
+
     @dp.callback_query(F.data == "menu_start")
     async def back_to_start(call: CallbackQuery, state: FSMContext):
         await state.clear()
         await cmd_start(call.message)
 
-    # Запуск
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
