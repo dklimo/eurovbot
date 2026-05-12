@@ -248,7 +248,7 @@ async def main():
             return
         await state.update_data(username=name)
         data = await state.get_data()
-        await message.answer(f"⭐ Оценка за **Stage/Выступление** (1–12):\n{data.get('country_display', '')}")
+        await message.answer(f"⭐ Оценка за Stage/Выступление (1–12):\n{data.get('country_display', '')}")
         await state.set_state(Voting.entering_performance)
 
     @dp.message(Voting.entering_performance)
@@ -257,7 +257,7 @@ async def main():
             p = int(message.text)
             if 1 <= p <= 12:
                 await state.update_data(performance=p)
-                await message.answer("🎵 Оценка за **Vocal/Исполнение** (1–12):")
+                await message.answer("🎵 Оценка за Vocal/Исполнение (1–12):")
                 await state.set_state(Voting.entering_singing)
             else:
                 raise ValueError
@@ -270,7 +270,7 @@ async def main():
             s = int(message.text)
             if 1 <= s <= 12:
                 await state.update_data(singing=s)
-                await message.answer("🌟 **Total/Общая** оценка (1–12):")
+                await message.answer("🌟 Total/Общая оценка (1–12):")
                 await state.set_state(Voting.entering_overall)
             else:
                 raise ValueError
@@ -406,11 +406,13 @@ async def main():
 
   
     @dp.callback_query(F.data == "menu_admin")
-    async def admin_prompt(call: CallbackQuery):
+    async def admin_prompt(call: CallbackQuery, state: FSMContext):
+        await state.clear()  # Сбрасываем состояние, чтобы не мешало
         await call.message.edit_text("🔐 Введите пароль администратора:")
 
-    @dp.message(F.text == ADMIN_PASSWORD)
-    async def admin_login(message: Message):
+    @dp.message(lambda msg: msg.text and msg.text.strip() == ADMIN_PASSWORD)
+    async def admin_login(message: Message, state: FSMContext):
+        await state.clear()  # На всякий случай сбрасываем
         admin_sessions.add(message.from_user.id)
         await message.answer(
             "✅ Вы вошли как администратор.\n\n"
