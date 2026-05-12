@@ -1,7 +1,6 @@
 import asyncio
 import os
 import logging
-import re
 import aiosqlite
 from collections import defaultdict
 from aiogram import Bot, Dispatcher, F
@@ -138,9 +137,7 @@ async def main():
     dp = Dispatcher()
     admin_sessions = set()
 
-    # ──────────────────────────────────────────────
-    # ГЛАВНОЕ МЕНЮ
-    # ──────────────────────────────────────────────
+    # ─── ГЛАВНОЕ МЕНЮ ───
     @dp.message(Command("start"))
     async def cmd_start(message: Message, state: FSMContext):
         await state.clear()
@@ -173,9 +170,7 @@ async def main():
         await cmd_start(call.message, state)
         await call.answer()
 
-    # ──────────────────────────────────────────────
-    # ГОЛОСОВАНИЕ
-    # ──────────────────────────────────────────────
+    # ─── ГОЛОСОВАНИЕ ───
     @dp.callback_query(F.data == "menu_vote")
     async def start_vote(call: CallbackQuery, state: FSMContext):
         await state.clear()
@@ -298,9 +293,7 @@ async def main():
         except:
             await message.answer("⚠️ Введите целое число от 1 до 12:")
 
-    # ──────────────────────────────────────────────
-    # ВСЕ ОЦЕНКИ
-    # ──────────────────────────────────────────────
+    # ─── ВСЕ ОЦЕНКИ ───
     @dp.callback_query(F.data == "menu_scores")
     async def show_scores(call: CallbackQuery):
         await call.message.edit_text("⏳ Загружаю оценки...")
@@ -358,9 +351,7 @@ async def main():
         ]))
         await call.answer()
 
-    # ──────────────────────────────────────────────
-    # ТОП-10
-    # ──────────────────────────────────────────────
+    # ─── ТОП-10 ───
     @dp.callback_query(F.data == "menu_top10")
     async def show_top10(call: CallbackQuery):
         async with aiosqlite.connect("scoreboard.db") as db:
@@ -399,41 +390,35 @@ async def main():
                                      ]))
         await call.answer()
 
-    # ──────────────────────────────────────────────
-    # АДМИН-ЛОГИН И УПРАВЛЕНИЕ
-    # ──────────────────────────────────────────────
+    # ─── АДМИНИСТРИРОВАНИЕ ───
     @dp.callback_query(F.data == "menu_admin")
     async def admin_prompt(call: CallbackQuery, state: FSMContext):
         await state.clear()
         await call.message.edit_text("🔐 Введите пароль администратора:")
+        await call.answer()
 
-    @dp.message(lambda msg: msg.text and msg.text.strip() == ADMIN_PASSWORD)
-    async def admin_login(message: Message, state: FSMContext):
-        await state.clear()
-        admin_sessions.add(message.from_user.id)
-        await message.answer(
-            "✅ Вы вошли как администратор.\n\n"
-            "<b>🔒 Управление списками:</b>\n"
-            "/lock semi1 | semi2 | final\n"
-            "/unlock semi1 | semi2 | final\n\n"
-            "<b>🗑️ Удаление оценок:</b>\n"
-            "/del_user имя\n"
-            "/del_country страна\n"
-            "/del_all — удалить ВСЕ оценки\n"
-            "/reset_db — сбросить базу\n\n"
-            "🚪 /admin_logout — выйти",
-            parse_mode="HTML"
-        )
+    @dp.message()
+    async def check_admin_password(message: Message, state: FSMContext):
+        if message.text and message.text.strip() == ADMIN_PASSWORD:
+            await state.clear()
+            admin_sessions.add(message.from_user.id)
+            await message.answer(
+                "✅ Вы вошли как администратор.\n\n"
+                "/lock semi1 | semi2 | final — заблокировать\n"
+                "/unlock semi1 | semi2 | final — разблокировать\n"
+                "/del_user имя — удалить оценки пользователя\n"
+                "/del_country страна — удалить оценки страны\n"
+                "/del_all — удалить ВСЕ оценки\n"
+                "/reset_db — сбросить базу\n"
+                "/admin_logout — выйти"
+            )
 
     @dp.message(Command("admin_logout"))
     async def admin_logout(message: Message):
-        if message.from_user.id in admin_sessions:
-            admin_sessions.discard(message.from_user.id)
-            await message.answer("👋 Вы вышли из режима администратора.", reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu_start")]]
-            ))
-        else:
-            await message.answer("Вы не входили как администратор.")
+        admin_sessions.discard(message.from_user.id)
+        await message.answer("👋 Вы вышли из режима администратора.", reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu_start")]]
+        ))
 
     def is_admin(message: Message):
         return message.from_user.id in admin_sessions
@@ -486,9 +471,9 @@ async def main():
                 deleted = cursor.rowcount
                 await db.commit()
             if deleted > 0:
-                await message.answer(f"🗑️ Удалено {deleted} оценок пользователя <b>{username}</b>", parse_mode="HTML")
+                await message.answer(f"🗑️ Удалено {deleted} оценок пользователя {username}")
             else:
-                await message.answer(f"❌ Пользователь <b>{username}</b> не найден.", parse_mode="HTML")
+                await message.answer(f"❌ Пользователь {username} не найден.")
         except:
             await message.answer("⚠️ Используйте: /del_user ИмяПользователя\nПример: /del_user Alex")
 
@@ -508,17 +493,14 @@ async def main():
                 )
                 countries = await cursor.fetchall()
                 if not countries:
-                    await message.answer(f"❌ Страна <b>{country_name}</b> не найдена.", parse_mode="HTML")
+                    await message.answer(f"❌ Страна {country_name} не найдена.")
                     return
                 total_deleted = 0
                 for country_id, full_name in countries:
                     cursor = await db.execute("DELETE FROM scores WHERE country_id=?", (country_id,))
                     total_deleted += cursor.rowcount
                 await db.commit()
-            await message.answer(
-                f"🗑️ Удалено {total_deleted} оценок для стран, содержащих <b>{country_name}</b>",
-                parse_mode="HTML"
-            )
+            await message.answer(f"🗑️ Удалено {total_deleted} оценок для стран, содержащих {country_name}")
         except:
             await message.answer("⚠️ Используйте: /del_country НазваниеСтраны\nПример: /del_country Moldova")
 
@@ -533,7 +515,7 @@ async def main():
                 count = (await cursor.fetchone())[0]
                 await db.execute("DELETE FROM scores")
                 await db.commit()
-            await message.answer(f"🗑️ Удалены ВСЕ оценки ({count} шт.). База очищена.")
+            await message.answer(f"🗑️ Удалены ВСЕ оценки ({count} шт.).")
         except Exception as e:
             await message.answer(f"❌ Ошибка: {e}")
 
@@ -545,9 +527,8 @@ async def main():
         try:
             if "confirm" not in message.text:
                 await message.answer(
-                    "⚠️ <b>ВНИМАНИЕ!</b> Это удалит ВСЕ оценки и списки стран.\n"
-                    "Для подтверждения напишите: <code>/reset_db confirm</code>",
-                    parse_mode="HTML"
+                    "⚠️ ВНИМАНИЕ! Это удалит ВСЕ оценки и списки.\n"
+                    "Для подтверждения: /reset_db confirm"
                 )
                 return
             async with aiosqlite.connect("scoreboard.db") as db:
@@ -556,11 +537,10 @@ async def main():
                 await db.execute("DROP TABLE IF EXISTS lists")
                 await db.commit()
             await init_db()
-            await message.answer("🔄 База данных полностью сброшена и пересоздана. Все списки восстановлены.")
+            await message.answer("🔄 База данных полностью сброшена и пересоздана.")
         except Exception as e:
             await message.answer(f"❌ Ошибка: {e}")
 
-    # Запуск
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
