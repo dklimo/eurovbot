@@ -137,7 +137,155 @@ async def main():
     dp = Dispatcher()
     admin_sessions = set()
 
-    # ─── ГЛАВНОЕ МЕНЮ ───
+    # ══════════════════════════════════════════════
+    # АДМИН-КОМАНДЫ (до всех остальных обработчиков)
+    # ══════════════════════════════════════════════
+
+    def is_admin(user_id):
+        return user_id in admin_sessions
+
+    @dp.message(Command("admin_logout"))
+    async def admin_logout(message: Message):
+        if message.from_user.id in admin_sessions:
+            admin_sessions.discard(message.from_user.id)
+            await message.answer("👋 Вы вышли из режима администратора.")
+        else:
+            await message.answer("❌ Вы не входили как администратор.")
+
+    @dp.message(Command("lock"))
+    async def lock_list(message: Message):
+        if not is_admin(message.from_user.id):
+            await message.answer("⛔ Сначала войдите как администратор (отправьте пароль).")
+            return
+        try:
+            parts = message.text.split()
+            if len(parts) != 2:
+                raise ValueError
+            list_id = parts[1]
+            if list_id not in ('semi1', 'semi2', 'final'):
+                raise ValueError
+            async with aiosqlite.connect("scoreboard.db") as db:
+                await db.execute("UPDATE lists SET locked=1 WHERE id=?", (list_id,))
+                await db.commit()
+            names = {"semi1": "First Semi-Final", "semi2": "Second Semi-Final", "final": "Final"}
+            await message.answer(f"🔒 Список «{names.get(list_id, list_id)}» заблокирован.")
+        except:
+            await message.answer("⚠️ Используйте: /lock semi1")
+
+    @dp.message(Command("unlock"))
+    async def unlock_list(message: Message):
+        if not is_admin(message.from_user.id):
+            await message.answer("⛔ Сначала войдите как администратор (отправьте пароль).")
+            return
+        try:
+            parts = message.text.split()
+            if len(parts) != 2:
+                raise ValueError
+            list_id = parts[1]
+            if list_id not in ('semi1', 'semi2', 'final'):
+                raise ValueError
+            async with aiosqlite.connect("scoreboard.db") as db:
+                await db.execute("UPDATE lists SET locked=0 WHERE id=?", (list_id,))
+                await db.commit()
+            names = {"semi1": "First Semi-Final", "semi2": "Second Semi-Final", "final": "Final"}
+            await message.answer(f"🔓 Список «{names.get(list_id, list_id)}» разблокирован.")
+        except:
+            await message.answer("⚠️ Используйте: /unlock semi1")
+
+    @dp.message(Command("del_user"))
+    async def delete_user_scores(message: Message):
+        if not is_admin(message.from_user.id):
+            await message.answer("⛔ Сначала войдите как администратор.")
+            return
+        try:
+            parts = message.text.split(" ", 1)
+            if len(parts) < 2:
+                raise ValueError
+            username = parts[1].strip()
+            if not username:
+                raise ValueError
+            async with aiosqlite.connect("scoreboard.db") as db:
+                cursor = await db.execute("DELETE FROM scores WHERE username=?", (username,))
+                deleted = cursor.rowcount
+                await db.commit()
+            if deleted > 0:
+                await message.answer(f"🗑️ Удалено {deleted} оценок пользователя {username}")
+            else:
+                await message.answer(f"❌ Пользователь {username} не найден.")
+        except:
+            await message.answer("⚠️ Используйте: /del_user Alex")
+
+    @dp.message(Command("del_country"))
+    async def delete_country_scores(message: Message):
+        if not is_admin(message.from_user.id):
+            await message.answer("⛔ Сначала войдите как администратор.")
+            return
+        try:
+            parts = message.text.split(" ", 1)
+            if len(parts) < 2:
+                raise ValueError
+            country_name = parts[1].strip()
+            if not country_name:
+                raise ValueError
+            async with aiosqlite.connect("scoreboard.db") as db:
+                cursor = await db.execute(
+                    "SELECT id, full_name FROM countries WHERE full_name LIKE ?",
+                    (f"%{country_name}%",)
+                )
+                countries = await cursor.fetchall()
+                if not countries:
+                    await message.answer(f"❌ Страна '{country_name}' не найдена.")
+                    return
+                total_deleted = 0
+                for country_id, full_name in countries:
+                    cursor = await db.execute("DELETE FROM scores WHERE country_id=?", (country_id,))
+                    total_deleted += cursor.rowcount
+                await db.commit()
+            await message.answer(f"🗑️ Удалено {total_deleted} оценок для '{country_name}'")
+        except:
+            await message.answer("⚠️ Используйте: /del_country Moldova")
+
+    @dp.message(Command("del_all"))
+    async def delete_all_scores(message: Message):
+        if not is_admin(message.from_user.id):
+            await message.answer("⛔ Сначала войдите как администратор.")
+            return
+        try:
+            async with aiosqlite.connect("scoreboard.db") as db:
+                cursor = await db.execute("SELECT COUNT(*) FROM scores")
+                count = (await cursor.fetchone())[0]
+                await db.execute("DELETE FROM scores")
+                await db.commit()
+            await message.answer(f"🗑️ Удалены ВСЕ оценки ({count} шт.).")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+
+    @dp.message(Command("reset_db"))
+    async def reset_database(message: Message):
+        if not is_admin(message.from_user.id):
+            await message.answer("⛔ Сначала войдите как администратор.")
+            return
+        try:
+            if "confirm" not in message.text:
+                await message.answer(
+                    "⚠️ ВНИМАНИЕ! Это удалит ВСЕ оценки и списки.\n"
+                    "Для подтверждения: /reset_db confirm"
+                )
+                return
+            async with aiosqlite.connect("scoreboard.db") as db:
+                await db.execute("DROP TABLE IF EXISTS scores")
+                await db.execute("DROP TABLE IF EXISTS countries")
+                await db.execute("DROP TABLE IF EXISTS lists")
+                await db.commit()
+            await init_db()
+            await message.answer("🔄 База данных полностью сброшена и пересоздана.")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+
+    # ══════════════════════════════════════════════
+    # ГЛАВНОЕ МЕНЮ
+    # ══════════════════════════════════════════════
+
     @dp.message(Command("start"))
     async def cmd_start(message: Message, state: FSMContext):
         await state.clear()
@@ -170,7 +318,10 @@ async def main():
         await cmd_start(call.message, state)
         await call.answer()
 
-    # ─── ГОЛОСОВАНИЕ ───
+    # ══════════════════════════════════════════════
+    # ГОЛОСОВАНИЕ
+    # ══════════════════════════════════════════════
+
     @dp.callback_query(F.data == "menu_vote")
     async def start_vote(call: CallbackQuery, state: FSMContext):
         await state.clear()
@@ -293,7 +444,10 @@ async def main():
         except:
             await message.answer("⚠️ Введите целое число от 1 до 12:")
 
-    # ─── ВСЕ ОЦЕНКИ ───
+    # ══════════════════════════════════════════════
+    # ВСЕ ОЦЕНКИ
+    # ══════════════════════════════════════════════
+
     @dp.callback_query(F.data == "menu_scores")
     async def show_scores(call: CallbackQuery):
         await call.message.edit_text("⏳ Загружаю оценки...")
@@ -351,7 +505,10 @@ async def main():
         ]))
         await call.answer()
 
-    # ─── ТОП-10 ───
+    # ══════════════════════════════════════════════
+    # ТОП-10
+    # ══════════════════════════════════════════════
+
     @dp.callback_query(F.data == "menu_top10")
     async def show_top10(call: CallbackQuery):
         async with aiosqlite.connect("scoreboard.db") as db:
@@ -390,7 +547,10 @@ async def main():
                                      ]))
         await call.answer()
 
-    # ─── АДМИНИСТРИРОВАНИЕ ───
+    # ══════════════════════════════════════════════
+    # ВХОД В АДМИНКУ (самый последний @dp.message)
+    # ══════════════════════════════════════════════
+
     @dp.callback_query(F.data == "menu_admin")
     async def admin_prompt(call: CallbackQuery, state: FSMContext):
         await state.clear()
@@ -398,148 +558,23 @@ async def main():
         await call.answer()
 
     @dp.message()
-    async def check_admin_password(message: Message, state: FSMContext):
+    async def admin_login_handler(message: Message, state: FSMContext):
+      
         if message.text and message.text.strip() == ADMIN_PASSWORD:
             await state.clear()
             admin_sessions.add(message.from_user.id)
             await message.answer(
                 "✅ Вы вошли как администратор.\n\n"
-                "/lock semi1 | semi2 | final — заблокировать\n"
-                "/unlock semi1 | semi2 | final — разблокировать\n"
-                "/del_user имя — удалить оценки пользователя\n"
-                "/del_country страна — удалить оценки страны\n"
-                "/del_all — удалить ВСЕ оценки\n"
-                "/reset_db — сбросить базу\n"
-                "/admin_logout — выйти"
+                "<b>Доступные команды:</b>\n"
+                "/lock semi1 | semi2 | final\n"
+                "/unlock semi1 | semi2 | final\n"
+                "/del_user имя\n"
+                "/del_country страна\n"
+                "/del_all\n"
+                "/reset_db confirm\n"
+                "/admin_logout",
+                parse_mode="HTML"
             )
-
-    @dp.message(Command("admin_logout"))
-    async def admin_logout(message: Message):
-        admin_sessions.discard(message.from_user.id)
-        await message.answer("👋 Вы вышли из режима администратора.", reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu_start")]]
-        ))
-
-    def is_admin(message: Message):
-        return message.from_user.id in admin_sessions
-
-    @dp.message(Command("lock"))
-    async def lock_list(message: Message):
-        if not is_admin(message):
-            await message.answer("⛔ Сначала войдите как администратор (отправьте пароль).")
-            return
-        try:
-            _, list_id = message.text.split()
-            if list_id not in ('semi1', 'semi2', 'final'):
-                raise ValueError
-            async with aiosqlite.connect("scoreboard.db") as db:
-                await db.execute("UPDATE lists SET locked=1 WHERE id=?", (list_id,))
-                await db.commit()
-            names = {"semi1": "First Semi-Final", "semi2": "Second Semi-Final", "final": "Final"}
-            await message.answer(f"🔒 Список «{names.get(list_id, list_id)}» заблокирован.")
-        except:
-            await message.answer("⚠️ Используйте: /lock semi1 | /lock semi2 | /lock final")
-
-    @dp.message(Command("unlock"))
-    async def unlock_list(message: Message):
-        if not is_admin(message):
-            await message.answer("⛔ Сначала войдите как администратор (отправьте пароль).")
-            return
-        try:
-            _, list_id = message.text.split()
-            if list_id not in ('semi1', 'semi2', 'final'):
-                raise ValueError
-            async with aiosqlite.connect("scoreboard.db") as db:
-                await db.execute("UPDATE lists SET locked=0 WHERE id=?", (list_id,))
-                await db.commit()
-            names = {"semi1": "First Semi-Final", "semi2": "Second Semi-Final", "final": "Final"}
-            await message.answer(f"🔓 Список «{names.get(list_id, list_id)}» разблокирован.")
-        except:
-            await message.answer("⚠️ Используйте: /unlock semi1 | /unlock semi2 | /unlock final")
-
-    @dp.message(Command("del_user"))
-    async def delete_user_scores(message: Message):
-        if not is_admin(message):
-            await message.answer("⛔ Сначала войдите как администратор.")
-            return
-        try:
-            username = message.text.split(" ", 1)[1].strip()
-            if not username:
-                raise ValueError
-            async with aiosqlite.connect("scoreboard.db") as db:
-                cursor = await db.execute("DELETE FROM scores WHERE username=?", (username,))
-                deleted = cursor.rowcount
-                await db.commit()
-            if deleted > 0:
-                await message.answer(f"🗑️ Удалено {deleted} оценок пользователя {username}")
-            else:
-                await message.answer(f"❌ Пользователь {username} не найден.")
-        except:
-            await message.answer("⚠️ Используйте: /del_user ИмяПользователя\nПример: /del_user Alex")
-
-    @dp.message(Command("del_country"))
-    async def delete_country_scores(message: Message):
-        if not is_admin(message):
-            await message.answer("⛔ Сначала войдите как администратор.")
-            return
-        try:
-            country_name = message.text.split(" ", 1)[1].strip()
-            if not country_name:
-                raise ValueError
-            async with aiosqlite.connect("scoreboard.db") as db:
-                cursor = await db.execute(
-                    "SELECT id, full_name FROM countries WHERE full_name LIKE ?",
-                    (f"%{country_name}%",)
-                )
-                countries = await cursor.fetchall()
-                if not countries:
-                    await message.answer(f"❌ Страна {country_name} не найдена.")
-                    return
-                total_deleted = 0
-                for country_id, full_name in countries:
-                    cursor = await db.execute("DELETE FROM scores WHERE country_id=?", (country_id,))
-                    total_deleted += cursor.rowcount
-                await db.commit()
-            await message.answer(f"🗑️ Удалено {total_deleted} оценок для стран, содержащих {country_name}")
-        except:
-            await message.answer("⚠️ Используйте: /del_country НазваниеСтраны\nПример: /del_country Moldova")
-
-    @dp.message(Command("del_all"))
-    async def delete_all_scores(message: Message):
-        if not is_admin(message):
-            await message.answer("⛔ Сначала войдите как администратор.")
-            return
-        try:
-            async with aiosqlite.connect("scoreboard.db") as db:
-                cursor = await db.execute("SELECT COUNT(*) FROM scores")
-                count = (await cursor.fetchone())[0]
-                await db.execute("DELETE FROM scores")
-                await db.commit()
-            await message.answer(f"🗑️ Удалены ВСЕ оценки ({count} шт.).")
-        except Exception as e:
-            await message.answer(f"❌ Ошибка: {e}")
-
-    @dp.message(Command("reset_db"))
-    async def reset_database(message: Message):
-        if not is_admin(message):
-            await message.answer("⛔ Сначала войдите как администратор.")
-            return
-        try:
-            if "confirm" not in message.text:
-                await message.answer(
-                    "⚠️ ВНИМАНИЕ! Это удалит ВСЕ оценки и списки.\n"
-                    "Для подтверждения: /reset_db confirm"
-                )
-                return
-            async with aiosqlite.connect("scoreboard.db") as db:
-                await db.execute("DROP TABLE IF EXISTS scores")
-                await db.execute("DROP TABLE IF EXISTS countries")
-                await db.execute("DROP TABLE IF EXISTS lists")
-                await db.commit()
-            await init_db()
-            await message.answer("🔄 База данных полностью сброшена и пересоздана.")
-        except Exception as e:
-            await message.answer(f"❌ Ошибка: {e}")
 
     await dp.start_polling(bot)
 
